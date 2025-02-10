@@ -1,5 +1,5 @@
 # GSound-SIR 
-*Get Raw Audio Ray Tracing Data*
+*Get Raw Room Spatial Impulse Response Ray Tracing Data*
 
 *(under active development)*
 
