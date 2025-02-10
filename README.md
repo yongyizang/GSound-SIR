@@ -78,7 +78,7 @@ If you use GSound-SIR in your work, we appreciate citations:
 }
 ```
 
-You may also reference the underlying [GSound project](https://github.com/jackpesch/gsound) where appropriate.
+You may also reference the underlying [GSound project]([https://github.com/jackpesch/gsound](https://github.com/GAMMA-UMD/pygsound/tree/master/src/GSound)) where appropriate.
 
 ## License
 - **GSound-SIR Python Bindings and Extensions**: [Apache License 2.0](LICENSE)
