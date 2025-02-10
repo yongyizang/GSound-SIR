@@ -1,0 +1,11 @@
+LICENSE
+README.md
+pyproject.toml
+setup.py
+src/python/spherical_harmonics/__init__.py
+src/spherical_harmonics.egg-info/PKG-INFO
+src/spherical_harmonics.egg-info/SOURCES.txt
+src/spherical_harmonics.egg-info/dependency_links.txt
+src/spherical_harmonics.egg-info/not-zip-safe
+src/spherical_harmonics.egg-info/requires.txt
+src/spherical_harmonics.egg-info/top_level.txt

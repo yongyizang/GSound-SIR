@@ -1,0 +1,31 @@
+{
+    "source_indices": [
+        4000787
+    ],
+    "path_types": [
+        4000787
+    ],
+    "distances": [
+        4000787
+    ],
+    "listener_directions": [
+        4000787,
+        3
+    ],
+    "source_directions": [
+        4000787,
+        3
+    ],
+    "relative_speeds": [
+        4000787
+    ],
+    "speeds_of_sound": [
+        4000787
+    ],
+    "intensities": [
+        4000787,
+        8
+    ],
+    "num_paths": 4000787,
+    "num_bands": 8
+}

@@ -1,0 +1,12 @@
+LICENSE.txt
+README.md
+pyproject.toml
+setup.cfg
+setup.py
+src/pygsound/__init__.py
+src/pygsound.egg-info/PKG-INFO
+src/pygsound.egg-info/SOURCES.txt
+src/pygsound.egg-info/dependency_links.txt
+src/pygsound.egg-info/not-zip-safe
+src/pygsound.egg-info/requires.txt
+src/pygsound.egg-info/top_level.txt

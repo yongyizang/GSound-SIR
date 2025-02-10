@@ -1,0 +1,8 @@
+Metadata-Version: 2.1
+Name: spherical_harmonics
+Version: 0.1.0
+Summary: Spherical Harmonics Library
+Author: Yongyi Zang
+Requires-Python: >=3.7
+License-File: LICENSE
+Requires-Dist: numpy>=1.20

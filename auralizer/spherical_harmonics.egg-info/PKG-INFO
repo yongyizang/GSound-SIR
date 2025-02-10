@@ -1,0 +1,7 @@
+Metadata-Version: 2.1
+Name: spherical_harmonics
+Version: 0.1
+Summary: Spherical Harmonics Evaluation Library
+Author: Yongyi Zang
+Requires-Python: >=3.6
+License-File: LICENSE
