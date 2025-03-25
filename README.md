@@ -1,9 +1,12 @@
 # GSound-SIR 
 *Get Raw Room Spatial Impulse Response Ray Tracing Data*
+Accepted at AES 2025 Europe
 
 *(under active development)*
 
 [![License](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
+
+[Paper Link](https://arxiv.org/abs/2503.17866)
 
 
 **Important licensing information**: This repository is developed on the basis of GSound and PyGSound, which follow their respective license. See [license](https://github.com/GAMMA-UMD/pygsound/tree/master?tab=License-1-ov-file) for details.
@@ -70,11 +73,14 @@ Empirical results demonstrate:
 If you use GSound-SIR in your work, we appreciate citations:
 
 ```
-@misc{zang_gsound_sir,
-  title={GSound-SIR: A Python Room Spatial Impulse Response Ray-Tracing Toolkit},
-  author={Zang, Yongyi and Kong, Qiuqiang},
-  howpublished={GitHub repository},
-  year={2025}
+@misc{zang2025gsoundsirspatialimpulseresponse,
+      title={GSound-SIR: A Spatial Impulse Response Ray-Tracing and High-order Ambisonic Auralization Python Toolkit}, 
+      author={Yongyi Zang and Qiuqiang Kong},
+      year={2025},
+      eprint={2503.17866},
+      archivePrefix={arXiv},
+      primaryClass={cs.SD},
+      url={https://arxiv.org/abs/2503.17866}, 
 }
 ```
 
