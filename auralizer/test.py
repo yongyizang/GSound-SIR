@@ -74,9 +74,9 @@ def test_ambisonic_ir_from_gsound_data():
     sample_rate = 48000
     
     listener_directions = np.vstack([
-        df['listener_x'], 
-        df['listener_y'], 
-        df['listener_z']
+        df['listener_direction_x'], 
+        df['listener_direction_y'], 
+        df['listener_direction_z']
     ]).T.astype(np.float32)
     
     # Get intensities for all frequency bands
