@@ -9,7 +9,9 @@ Accepted at AES 2025 Europe
 [Paper Link](https://arxiv.org/abs/2503.17866)
 
 ## Updates
-07/10/2025: There was a critical bug in both auralizer and the ray generator. The ray generator does not output listener directions in the output SIR, and the auralizer was using the listener position rather than their directions for calculation. Thanks to [@FEAfeatherTHER](https://github.com/FEAfeatherTHER) for spotting this bug!
+- 07/13/2025: We updated the auralization logic, which now allows for *any* higher-order ambisonic generation, as well as an improved logic for generating the ambisonic signals. Check it out!
+
+- 07/10/2025: There was a critical bug in both auralizer and the ray generator. The ray generator does not output listener directions in the output SIR, and the auralizer was using the listener position rather than their directions for calculation. Thanks to [@FEAfeatherTHER](https://github.com/FEAfeatherTHER) for spotting this bug!
 
 
 **Important licensing information**: This repository is developed on the basis of GSound and PyGSound, which follow their respective license. See [license](https://github.com/GAMMA-UMD/pygsound/tree/master?tab=License-1-ov-file) for details.
