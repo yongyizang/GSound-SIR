@@ -1,769 +1,137 @@
 #include <pybind11/pybind11.h>
 #include <pybind11/numpy.h>
+#include <pybind11/stl.h>
 #include <vector>
 #include <cmath>
 #include <random>
-#include <iostream>
+#include <numeric>
+#include <stdexcept>
+#include <algorithm>
+
+#ifndef M_PI
+#define M_PI 3.14159265358979323846
+#endif
 
 namespace py = pybind11;
 
-// order 2
-void SHEval2(const float fX, const float fY, const float fZ, float *pSH)
-{
-    float fC0, fS0, fTmpA;
+/**
+ * @brief Calculates the Spherical Harmonics normalization constant K(l, m) for N3D.
+ *
+ * K(l,m) = sqrt( (2*l + 1) * (l - |m|)! / (4 * PI * (l + |m|)!) )
+ * The calculation is performed using logarithms to handle large factorials without overflow.
+ *
+ * @param l The SH order (degree).
+ * @param m The SH index (degree).
+ * @return The normalization constant as a double.
+ */
+double calculate_sh_normalization(unsigned int l, int m) {
+    const unsigned int abs_m = std::abs(m);
+    
+    // Use log-gamma for factorial calculation to avoid overflow and precision issues.
+    // lgamma(n) = log((n-1)!)
+    double log_val = 0.5 * (
+        std::log(2.0 * l + 1.0) - 
+        std::log(4.0 * M_PI) + 
+        std::lgamma(l - abs_m + 1.0) - 
+        std::lgamma(l + abs_m + 1.0)
+    );
 
-    pSH[0] = 0.2820947917738781f;
-
-    fC0 = fX;
-    fS0 = fY;
-
-    fTmpA = 0.4886025119029199f;
-    pSH[1] = fTmpA * fS0;
-    pSH[2] = fTmpA * fZ;
-    pSH[3] = fTmpA * fC0;
+    return std::exp(log_val);
 }
 
+/**
+ * @brief Evaluates real-valued Spherical Harmonics (N3D/ACN ordering) for a given direction.
+ *
+ * This function calculates the SH coefficients up to a specified order for a Cartesian direction vector (x, y, z).
+ * It uses the efficient recurrence-based method described by Sloan [2013], which avoids
+ * explicit trigonometric function calls (sin, cos, atan2).
+ *
+ * @param max_order The maximum SH order to compute (e.g., 3 for third-order Ambisonics).
+ * @param x The x-component of the normalized direction vector.
+ * @param y The y-component of the normalized direction vector.
+ * @param z The z-component of the normalized direction vector.
+ * @param sh_norm_factors A pre-calculated table of normalization factors.
+ * @param sh_coefficients A pre-allocated vector to store the output SH coefficients. Its size must be (max_order + 1)^2.
+ */
+void evaluate_spherical_harmonics(
+    unsigned int max_order, 
+    float x, float y, float z, 
+    const std::vector<std::vector<double>>& sh_norm_factors,
+    std::vector<float>& sh_coefficients
+) {
+    unsigned int num_coeffs = (max_order + 1) * (max_order + 1);
+    if (sh_coefficients.size() != num_coeffs) {
+        throw std::invalid_argument("Output vector size must match (max_order + 1)^2.");
+    }
 
-// order 3
-void SHEval3(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
+    // Pre-calculate Associated Legendre Polynomials with (sin(theta))^m factored out
+    // This uses the recurrence relations from Sloan [2013], Eq. 4. https://jcgt.org/published/0002/02/06/
+    std::vector<std::vector<double>> p_lm(max_order + 1, std::vector<double>(max_order + 1, 0.0));
+    
+    // P_0^0 = 1
+    p_lm[0][0] = 1.0;
+    // P_m^m = (1-2m) * P_{m-1}^{m-1}
+    for (unsigned int m = 1; m <= max_order; ++m) {
+        p_lm[m][m] = (1.0 - 2.0 * m) * p_lm[m-1][m-1];
+    }
 
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   fC0 = fX;
-   fS0 = fY;
+    // P_{m+1}^m(z) = z * (2m+1) * P_m^m(z)
+    for (unsigned int m = 0; m < max_order; ++m) {
+        p_lm[m+1][m] = z * (2.0 * m + 1.0) * p_lm[m][m];
+    }
+    
+    // Calculate P_l^m(z) for l > m+1 using the main recurrence relation:
+    // (l-m) * P_l^m = z * (2l-1) * P_{l-1}^m - (l+m-1) * P_{l-2}^m
+    for (unsigned int l = 2; l <= max_order; ++l) {
+        for (unsigned int m = 0; m < l - 1; ++m) {
+            p_lm[l][m] = (z * (2.0 * l - 1.0) * p_lm[l-1][m] - (l + m - 1.0) * p_lm[l-2][m]) / (l - m);
+        }
+    }
+    
+    // --- Combine with normalization and azimuthal terms using recurrence on x,y ---
+    double sqrt2 = std::sqrt(2.0);
+    
+    // m = 0 (zonal harmonics). These only depend on z.
+    for (unsigned int l = 0; l <= max_order; ++l) {
+        int acn = l * l + l;
+        sh_coefficients[acn] = sh_norm_factors[l][0] * p_lm[l][0];
+    }
 
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
+    // m > 0 (tesseral/sectoral harmonics)
+    // We use a recurrence to calculate the (sin(theta))^m * cos/sin(m*phi) terms,
+    // which are pure polynomials of x and y.
+    // Let A_m = (sin(theta))^m * cos(m*phi), B_m = (sin(theta))^m * sin(m*phi)
+    // A_m = A_{m-1}*x - B_{m-1}*y
+    // B_m = A_{m-1}*y + B_{m-1}*x
+    double a_m_prev = 1.0; // A_0
+    double b_m_prev = 0.0; // B_0
 
-   fTmpC = 0.5462742152960395f;
-   pSH[8] = fTmpC*fC1;
-   pSH[4] = fTmpC*fS1;
+    for (unsigned int m = 1; m <= max_order; ++m) {
+        // Update the azimuthal polynomial terms
+        double a_m = a_m_prev * x - b_m_prev * y;
+        double b_m = a_m_prev * y + b_m_prev * x;
+
+        // Combine Legendre polynomials with azimuthal terms
+        for (unsigned int l = m; l <= max_order; ++l) {
+            int acn_pos = l * l + l + m; // Index for +m
+            int acn_neg = l * l + l - m; // Index for -m
+            
+            double norm_factor = sh_norm_factors[l][m];
+            double p_val = p_lm[l][m];
+
+            sh_coefficients[acn_pos] = norm_factor * sqrt2 * p_val * a_m; // m > 0
+            sh_coefficients[acn_neg] = norm_factor * sqrt2 * p_val * b_m; // m < 0
+        }
+
+        // Store current values for next iteration
+        a_m_prev = a_m;
+        b_m_prev = b_m;
+    }
 }
 
-// order 4
-void SHEval4(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
-
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   pSH[12] = fZ*(1.865881662950577f*fZ2 + -1.119528997770346f);
-   fC0 = fX;
-   fS0 = fY;
-
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fTmpC = -2.285228997322329f*fZ2 + 0.4570457994644658f;
-   pSH[13] = fTmpC*fC0;
-   pSH[11] = fTmpC*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.5462742152960395f;
-   pSH[8] = fTmpA*fC1;
-   pSH[4] = fTmpA*fS1;
-   fTmpB = 1.445305721320277f*fZ;
-   pSH[14] = fTmpB*fC1;
-   pSH[10] = fTmpB*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpC = -0.5900435899266435f;
-   pSH[15] = fTmpC*fC0;
-   pSH[9] = fTmpC*fS0;
-}
-
-// order 5
-void SHEval5(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
-
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   pSH[12] = fZ*(1.865881662950577f*fZ2 + -1.119528997770346f);
-   pSH[20] = 1.984313483298443f*fZ*pSH[12] + -1.006230589874905f*pSH[6];
-   fC0 = fX;
-   fS0 = fY;
-
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fTmpC = -2.285228997322329f*fZ2 + 0.4570457994644658f;
-   pSH[13] = fTmpC*fC0;
-   pSH[11] = fTmpC*fS0;
-   fTmpA = fZ*(-4.683325804901025f*fZ2 + 2.007139630671868f);
-   pSH[21] = fTmpA*fC0;
-   pSH[19] = fTmpA*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.5462742152960395f;
-   pSH[8] = fTmpA*fC1;
-   pSH[4] = fTmpA*fS1;
-   fTmpB = 1.445305721320277f*fZ;
-   pSH[14] = fTmpB*fC1;
-   pSH[10] = fTmpB*fS1;
-   fTmpC = 3.31161143515146f*fZ2 + -0.47308734787878f;
-   pSH[22] = fTmpC*fC1;
-   pSH[18] = fTmpC*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.5900435899266435f;
-   pSH[15] = fTmpA*fC0;
-   pSH[9] = fTmpA*fS0;
-   fTmpB = -1.770130769779931f*fZ;
-   pSH[23] = fTmpB*fC0;
-   pSH[17] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpC = 0.6258357354491763f;
-   pSH[24] = fTmpC*fC1;
-   pSH[16] = fTmpC*fS1;
-}
-
-// order 6
-void SHEval6(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
-
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   pSH[12] = fZ*(1.865881662950577f*fZ2 + -1.119528997770346f);
-   pSH[20] = 1.984313483298443f*fZ*pSH[12] + -1.006230589874905f*pSH[6];
-   pSH[30] = 1.98997487421324f*fZ*pSH[20] + -1.002853072844814f*pSH[12];
-   fC0 = fX;
-   fS0 = fY;
-
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fTmpC = -2.285228997322329f*fZ2 + 0.4570457994644658f;
-   pSH[13] = fTmpC*fC0;
-   pSH[11] = fTmpC*fS0;
-   fTmpA = fZ*(-4.683325804901025f*fZ2 + 2.007139630671868f);
-   pSH[21] = fTmpA*fC0;
-   pSH[19] = fTmpA*fS0;
-   fTmpB = 2.03100960115899f*fZ*fTmpA + -0.991031208965115f*fTmpC;
-   pSH[31] = fTmpB*fC0;
-   pSH[29] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.5462742152960395f;
-   pSH[8] = fTmpA*fC1;
-   pSH[4] = fTmpA*fS1;
-   fTmpB = 1.445305721320277f*fZ;
-   pSH[14] = fTmpB*fC1;
-   pSH[10] = fTmpB*fS1;
-   fTmpC = 3.31161143515146f*fZ2 + -0.47308734787878f;
-   pSH[22] = fTmpC*fC1;
-   pSH[18] = fTmpC*fS1;
-   fTmpA = fZ*(7.190305177459987f*fZ2 + -2.396768392486662f);
-   pSH[32] = fTmpA*fC1;
-   pSH[28] = fTmpA*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.5900435899266435f;
-   pSH[15] = fTmpA*fC0;
-   pSH[9] = fTmpA*fS0;
-   fTmpB = -1.770130769779931f*fZ;
-   pSH[23] = fTmpB*fC0;
-   pSH[17] = fTmpB*fS0;
-   fTmpC = -4.403144694917254f*fZ2 + 0.4892382994352505f;
-   pSH[33] = fTmpC*fC0;
-   pSH[27] = fTmpC*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6258357354491763f;
-   pSH[24] = fTmpA*fC1;
-   pSH[16] = fTmpA*fS1;
-   fTmpB = 2.075662314881041f*fZ;
-   pSH[34] = fTmpB*fC1;
-   pSH[26] = fTmpB*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpC = -0.6563820568401703f;
-   pSH[35] = fTmpC*fC0;
-   pSH[25] = fTmpC*fS0;
-}
-
-// order 7
-void SHEval7(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
-
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   pSH[12] = fZ*(1.865881662950577f*fZ2 + -1.119528997770346f);
-   pSH[20] = 1.984313483298443f*fZ*pSH[12] + -1.006230589874905f*pSH[6];
-   pSH[30] = 1.98997487421324f*fZ*pSH[20] + -1.002853072844814f*pSH[12];
-   pSH[42] = 1.993043457183567f*fZ*pSH[30] + -1.001542020962219f*pSH[20];
-   fC0 = fX;
-   fS0 = fY;
-
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fTmpC = -2.285228997322329f*fZ2 + 0.4570457994644658f;
-   pSH[13] = fTmpC*fC0;
-   pSH[11] = fTmpC*fS0;
-   fTmpA = fZ*(-4.683325804901025f*fZ2 + 2.007139630671868f);
-   pSH[21] = fTmpA*fC0;
-   pSH[19] = fTmpA*fS0;
-   fTmpB = 2.03100960115899f*fZ*fTmpA + -0.991031208965115f*fTmpC;
-   pSH[31] = fTmpB*fC0;
-   pSH[29] = fTmpB*fS0;
-   fTmpC = 2.021314989237028f*fZ*fTmpB + -0.9952267030562385f*fTmpA;
-   pSH[43] = fTmpC*fC0;
-   pSH[41] = fTmpC*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.5462742152960395f;
-   pSH[8] = fTmpA*fC1;
-   pSH[4] = fTmpA*fS1;
-   fTmpB = 1.445305721320277f*fZ;
-   pSH[14] = fTmpB*fC1;
-   pSH[10] = fTmpB*fS1;
-   fTmpC = 3.31161143515146f*fZ2 + -0.47308734787878f;
-   pSH[22] = fTmpC*fC1;
-   pSH[18] = fTmpC*fS1;
-   fTmpA = fZ*(7.190305177459987f*fZ2 + -2.396768392486662f);
-   pSH[32] = fTmpA*fC1;
-   pSH[28] = fTmpA*fS1;
-   fTmpB = 2.11394181566097f*fZ*fTmpA + -0.9736101204623268f*fTmpC;
-   pSH[44] = fTmpB*fC1;
-   pSH[40] = fTmpB*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.5900435899266435f;
-   pSH[15] = fTmpA*fC0;
-   pSH[9] = fTmpA*fS0;
-   fTmpB = -1.770130769779931f*fZ;
-   pSH[23] = fTmpB*fC0;
-   pSH[17] = fTmpB*fS0;
-   fTmpC = -4.403144694917254f*fZ2 + 0.4892382994352505f;
-   pSH[33] = fTmpC*fC0;
-   pSH[27] = fTmpC*fS0;
-   fTmpA = fZ*(-10.13325785466416f*fZ2 + 2.763615778544771f);
-   pSH[45] = fTmpA*fC0;
-   pSH[39] = fTmpA*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6258357354491763f;
-   pSH[24] = fTmpA*fC1;
-   pSH[16] = fTmpA*fS1;
-   fTmpB = 2.075662314881041f*fZ;
-   pSH[34] = fTmpB*fC1;
-   pSH[26] = fTmpB*fS1;
-   fTmpC = 5.550213908015966f*fZ2 + -0.5045649007287241f;
-   pSH[46] = fTmpC*fC1;
-   pSH[38] = fTmpC*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.6563820568401703f;
-   pSH[35] = fTmpA*fC0;
-   pSH[25] = fTmpA*fS0;
-   fTmpB = -2.366619162231753f*fZ;
-   pSH[47] = fTmpB*fC0;
-   pSH[37] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpC = 0.6831841051919144f;
-   pSH[48] = fTmpC*fC1;
-   pSH[36] = fTmpC*fS1;
-}
-
-// order 8
-void SHEval8(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
-
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   pSH[12] = fZ*(1.865881662950577f*fZ2 + -1.119528997770346f);
-   pSH[20] = 1.984313483298443f*fZ*pSH[12] + -1.006230589874905f*pSH[6];
-   pSH[30] = 1.98997487421324f*fZ*pSH[20] + -1.002853072844814f*pSH[12];
-   pSH[42] = 1.993043457183567f*fZ*pSH[30] + -1.001542020962219f*pSH[20];
-   pSH[56] = 1.994891434824135f*fZ*pSH[42] + -1.000927213921958f*pSH[30];
-   fC0 = fX;
-   fS0 = fY;
-
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fTmpC = -2.285228997322329f*fZ2 + 0.4570457994644658f;
-   pSH[13] = fTmpC*fC0;
-   pSH[11] = fTmpC*fS0;
-   fTmpA = fZ*(-4.683325804901025f*fZ2 + 2.007139630671868f);
-   pSH[21] = fTmpA*fC0;
-   pSH[19] = fTmpA*fS0;
-   fTmpB = 2.03100960115899f*fZ*fTmpA + -0.991031208965115f*fTmpC;
-   pSH[31] = fTmpB*fC0;
-   pSH[29] = fTmpB*fS0;
-   fTmpC = 2.021314989237028f*fZ*fTmpB + -0.9952267030562385f*fTmpA;
-   pSH[43] = fTmpC*fC0;
-   pSH[41] = fTmpC*fS0;
-   fTmpA = 2.015564437074638f*fZ*fTmpC + -0.9971550440218319f*fTmpB;
-   pSH[57] = fTmpA*fC0;
-   pSH[55] = fTmpA*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.5462742152960395f;
-   pSH[8] = fTmpA*fC1;
-   pSH[4] = fTmpA*fS1;
-   fTmpB = 1.445305721320277f*fZ;
-   pSH[14] = fTmpB*fC1;
-   pSH[10] = fTmpB*fS1;
-   fTmpC = 3.31161143515146f*fZ2 + -0.47308734787878f;
-   pSH[22] = fTmpC*fC1;
-   pSH[18] = fTmpC*fS1;
-   fTmpA = fZ*(7.190305177459987f*fZ2 + -2.396768392486662f);
-   pSH[32] = fTmpA*fC1;
-   pSH[28] = fTmpA*fS1;
-   fTmpB = 2.11394181566097f*fZ*fTmpA + -0.9736101204623268f*fTmpC;
-   pSH[44] = fTmpB*fC1;
-   pSH[40] = fTmpB*fS1;
-   fTmpC = 2.081665999466133f*fZ*fTmpB + -0.9847319278346618f*fTmpA;
-   pSH[58] = fTmpC*fC1;
-   pSH[54] = fTmpC*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.5900435899266435f;
-   pSH[15] = fTmpA*fC0;
-   pSH[9] = fTmpA*fS0;
-   fTmpB = -1.770130769779931f*fZ;
-   pSH[23] = fTmpB*fC0;
-   pSH[17] = fTmpB*fS0;
-   fTmpC = -4.403144694917254f*fZ2 + 0.4892382994352505f;
-   pSH[33] = fTmpC*fC0;
-   pSH[27] = fTmpC*fS0;
-   fTmpA = fZ*(-10.13325785466416f*fZ2 + 2.763615778544771f);
-   pSH[45] = fTmpA*fC0;
-   pSH[39] = fTmpA*fS0;
-   fTmpB = 2.207940216581962f*fZ*fTmpA + -0.959403223600247f*fTmpC;
-   pSH[59] = fTmpB*fC0;
-   pSH[53] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6258357354491763f;
-   pSH[24] = fTmpA*fC1;
-   pSH[16] = fTmpA*fS1;
-   fTmpB = 2.075662314881041f*fZ;
-   pSH[34] = fTmpB*fC1;
-   pSH[26] = fTmpB*fS1;
-   fTmpC = 5.550213908015966f*fZ2 + -0.5045649007287241f;
-   pSH[46] = fTmpC*fC1;
-   pSH[38] = fTmpC*fS1;
-   fTmpA = fZ*(13.49180504672677f*fZ2 + -3.113493472321562f);
-   pSH[60] = fTmpA*fC1;
-   pSH[52] = fTmpA*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.6563820568401703f;
-   pSH[35] = fTmpA*fC0;
-   pSH[25] = fTmpA*fS0;
-   fTmpB = -2.366619162231753f*fZ;
-   pSH[47] = fTmpB*fC0;
-   pSH[37] = fTmpB*fS0;
-   fTmpC = -6.745902523363385f*fZ2 + 0.5189155787202604f;
-   pSH[61] = fTmpC*fC0;
-   pSH[51] = fTmpC*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6831841051919144f;
-   pSH[48] = fTmpA*fC1;
-   pSH[36] = fTmpA*fS1;
-   fTmpB = 2.645960661801901f*fZ;
-   pSH[62] = fTmpB*fC1;
-   pSH[50] = fTmpB*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpC = -0.7071627325245963f;
-   pSH[63] = fTmpC*fC0;
-   pSH[49] = fTmpC*fS0;
-}
-
-// order 9
-void SHEval9(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
-
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   pSH[12] = fZ*(1.865881662950577f*fZ2 + -1.119528997770346f);
-   pSH[20] = 1.984313483298443f*fZ*pSH[12] + -1.006230589874905f*pSH[6];
-   pSH[30] = 1.98997487421324f*fZ*pSH[20] + -1.002853072844814f*pSH[12];
-   pSH[42] = 1.993043457183567f*fZ*pSH[30] + -1.001542020962219f*pSH[20];
-   pSH[56] = 1.994891434824135f*fZ*pSH[42] + -1.000927213921958f*pSH[30];
-   pSH[72] = 1.996089927833914f*fZ*pSH[56] + -1.000600781069515f*pSH[42];
-   fC0 = fX;
-   fS0 = fY;
-
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fTmpC = -2.285228997322329f*fZ2 + 0.4570457994644658f;
-   pSH[13] = fTmpC*fC0;
-   pSH[11] = fTmpC*fS0;
-   fTmpA = fZ*(-4.683325804901025f*fZ2 + 2.007139630671868f);
-   pSH[21] = fTmpA*fC0;
-   pSH[19] = fTmpA*fS0;
-   fTmpB = 2.03100960115899f*fZ*fTmpA + -0.991031208965115f*fTmpC;
-   pSH[31] = fTmpB*fC0;
-   pSH[29] = fTmpB*fS0;
-   fTmpC = 2.021314989237028f*fZ*fTmpB + -0.9952267030562385f*fTmpA;
-   pSH[43] = fTmpC*fC0;
-   pSH[41] = fTmpC*fS0;
-   fTmpA = 2.015564437074638f*fZ*fTmpC + -0.9971550440218319f*fTmpB;
-   pSH[57] = fTmpA*fC0;
-   pSH[55] = fTmpA*fS0;
-   fTmpB = 2.011869540407391f*fZ*fTmpA + -0.9981668178901745f*fTmpC;
-   pSH[73] = fTmpB*fC0;
-   pSH[71] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.5462742152960395f;
-   pSH[8] = fTmpA*fC1;
-   pSH[4] = fTmpA*fS1;
-   fTmpB = 1.445305721320277f*fZ;
-   pSH[14] = fTmpB*fC1;
-   pSH[10] = fTmpB*fS1;
-   fTmpC = 3.31161143515146f*fZ2 + -0.47308734787878f;
-   pSH[22] = fTmpC*fC1;
-   pSH[18] = fTmpC*fS1;
-   fTmpA = fZ*(7.190305177459987f*fZ2 + -2.396768392486662f);
-   pSH[32] = fTmpA*fC1;
-   pSH[28] = fTmpA*fS1;
-   fTmpB = 2.11394181566097f*fZ*fTmpA + -0.9736101204623268f*fTmpC;
-   pSH[44] = fTmpB*fC1;
-   pSH[40] = fTmpB*fS1;
-   fTmpC = 2.081665999466133f*fZ*fTmpB + -0.9847319278346618f*fTmpA;
-   pSH[58] = fTmpC*fC1;
-   pSH[54] = fTmpC*fS1;
-   fTmpA = 2.06155281280883f*fZ*fTmpC + -0.9903379376602873f*fTmpB;
-   pSH[74] = fTmpA*fC1;
-   pSH[70] = fTmpA*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.5900435899266435f;
-   pSH[15] = fTmpA*fC0;
-   pSH[9] = fTmpA*fS0;
-   fTmpB = -1.770130769779931f*fZ;
-   pSH[23] = fTmpB*fC0;
-   pSH[17] = fTmpB*fS0;
-   fTmpC = -4.403144694917254f*fZ2 + 0.4892382994352505f;
-   pSH[33] = fTmpC*fC0;
-   pSH[27] = fTmpC*fS0;
-   fTmpA = fZ*(-10.13325785466416f*fZ2 + 2.763615778544771f);
-   pSH[45] = fTmpA*fC0;
-   pSH[39] = fTmpA*fS0;
-   fTmpB = 2.207940216581962f*fZ*fTmpA + -0.959403223600247f*fTmpC;
-   pSH[59] = fTmpB*fC0;
-   pSH[53] = fTmpB*fS0;
-   fTmpC = 2.15322168769582f*fZ*fTmpB + -0.9752173865600178f*fTmpA;
-   pSH[75] = fTmpC*fC0;
-   pSH[69] = fTmpC*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6258357354491763f;
-   pSH[24] = fTmpA*fC1;
-   pSH[16] = fTmpA*fS1;
-   fTmpB = 2.075662314881041f*fZ;
-   pSH[34] = fTmpB*fC1;
-   pSH[26] = fTmpB*fS1;
-   fTmpC = 5.550213908015966f*fZ2 + -0.5045649007287241f;
-   pSH[46] = fTmpC*fC1;
-   pSH[38] = fTmpC*fS1;
-   fTmpA = fZ*(13.49180504672677f*fZ2 + -3.113493472321562f);
-   pSH[60] = fTmpA*fC1;
-   pSH[52] = fTmpA*fS1;
-   fTmpB = 2.304886114323221f*fZ*fTmpA + -0.9481763873554654f*fTmpC;
-   pSH[76] = fTmpB*fC1;
-   pSH[68] = fTmpB*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.6563820568401703f;
-   pSH[35] = fTmpA*fC0;
-   pSH[25] = fTmpA*fS0;
-   fTmpB = -2.366619162231753f*fZ;
-   pSH[47] = fTmpB*fC0;
-   pSH[37] = fTmpB*fS0;
-   fTmpC = -6.745902523363385f*fZ2 + 0.5189155787202604f;
-   pSH[61] = fTmpC*fC0;
-   pSH[51] = fTmpC*fS0;
-   fTmpA = fZ*(-17.24955311049054f*fZ2 + 3.449910622098108f);
-   pSH[77] = fTmpA*fC0;
-   pSH[67] = fTmpA*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6831841051919144f;
-   pSH[48] = fTmpA*fC1;
-   pSH[36] = fTmpA*fS1;
-   fTmpB = 2.645960661801901f*fZ;
-   pSH[62] = fTmpB*fC1;
-   pSH[50] = fTmpB*fS1;
-   fTmpC = 7.984991490893139f*fZ2 + -0.5323327660595426f;
-   pSH[78] = fTmpC*fC1;
-   pSH[66] = fTmpC*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.7071627325245963f;
-   pSH[63] = fTmpA*fC0;
-   pSH[49] = fTmpA*fS0;
-   fTmpB = -2.91570664069932f*fZ;
-   pSH[79] = fTmpB*fC0;
-   pSH[65] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpC = 0.72892666017483f;
-   pSH[80] = fTmpC*fC1;
-   pSH[64] = fTmpC*fS1;
-}
-
-// order 10
-void SHEval10(const float fX, const float fY, const float fZ, float *pSH)
-{
-   float fC0,fC1,fS0,fS1,fTmpA,fTmpB,fTmpC;
-   float fZ2 = fZ*fZ;
-
-   pSH[0] = 0.2820947917738781f;
-   pSH[2] = 0.4886025119029199f*fZ;
-   pSH[6] = 0.9461746957575601f*fZ2 + -0.3153915652525201f;
-   pSH[12] = fZ*(1.865881662950577f*fZ2 + -1.119528997770346f);
-   pSH[20] = 1.984313483298443f*fZ*pSH[12] + -1.006230589874905f*pSH[6];
-   pSH[30] = 1.98997487421324f*fZ*pSH[20] + -1.002853072844814f*pSH[12];
-   pSH[42] = 1.993043457183567f*fZ*pSH[30] + -1.001542020962219f*pSH[20];
-   pSH[56] = 1.994891434824135f*fZ*pSH[42] + -1.000927213921958f*pSH[30];
-   pSH[72] = 1.996089927833914f*fZ*pSH[56] + -1.000600781069515f*pSH[42];
-   pSH[90] = 1.996911195067937f*fZ*pSH[72] + -1.000411437993134f*pSH[56];
-   fC0 = fX;
-   fS0 = fY;
-
-   fTmpA = -0.48860251190292f;
-   pSH[3] = fTmpA*fC0;
-   pSH[1] = fTmpA*fS0;
-   fTmpB = -1.092548430592079f*fZ;
-   pSH[7] = fTmpB*fC0;
-   pSH[5] = fTmpB*fS0;
-   fTmpC = -2.285228997322329f*fZ2 + 0.4570457994644658f;
-   pSH[13] = fTmpC*fC0;
-   pSH[11] = fTmpC*fS0;
-   fTmpA = fZ*(-4.683325804901025f*fZ2 + 2.007139630671868f);
-   pSH[21] = fTmpA*fC0;
-   pSH[19] = fTmpA*fS0;
-   fTmpB = 2.03100960115899f*fZ*fTmpA + -0.991031208965115f*fTmpC;
-   pSH[31] = fTmpB*fC0;
-   pSH[29] = fTmpB*fS0;
-   fTmpC = 2.021314989237028f*fZ*fTmpB + -0.9952267030562385f*fTmpA;
-   pSH[43] = fTmpC*fC0;
-   pSH[41] = fTmpC*fS0;
-   fTmpA = 2.015564437074638f*fZ*fTmpC + -0.9971550440218319f*fTmpB;
-   pSH[57] = fTmpA*fC0;
-   pSH[55] = fTmpA*fS0;
-   fTmpB = 2.011869540407391f*fZ*fTmpA + -0.9981668178901745f*fTmpC;
-   pSH[73] = fTmpB*fC0;
-   pSH[71] = fTmpB*fS0;
-   fTmpC = 2.009353129741012f*fZ*fTmpB + -0.9987492177719088f*fTmpA;
-   pSH[91] = fTmpC*fC0;
-   pSH[89] = fTmpC*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.5462742152960395f;
-   pSH[8] = fTmpA*fC1;
-   pSH[4] = fTmpA*fS1;
-   fTmpB = 1.445305721320277f*fZ;
-   pSH[14] = fTmpB*fC1;
-   pSH[10] = fTmpB*fS1;
-   fTmpC = 3.31161143515146f*fZ2 + -0.47308734787878f;
-   pSH[22] = fTmpC*fC1;
-   pSH[18] = fTmpC*fS1;
-   fTmpA = fZ*(7.190305177459987f*fZ2 + -2.396768392486662f);
-   pSH[32] = fTmpA*fC1;
-   pSH[28] = fTmpA*fS1;
-   fTmpB = 2.11394181566097f*fZ*fTmpA + -0.9736101204623268f*fTmpC;
-   pSH[44] = fTmpB*fC1;
-   pSH[40] = fTmpB*fS1;
-   fTmpC = 2.081665999466133f*fZ*fTmpB + -0.9847319278346618f*fTmpA;
-   pSH[58] = fTmpC*fC1;
-   pSH[54] = fTmpC*fS1;
-   fTmpA = 2.06155281280883f*fZ*fTmpC + -0.9903379376602873f*fTmpB;
-   pSH[74] = fTmpA*fC1;
-   pSH[70] = fTmpA*fS1;
-   fTmpB = 2.048122358357819f*fZ*fTmpA + -0.9934852726704042f*fTmpC;
-   pSH[92] = fTmpB*fC1;
-   pSH[88] = fTmpB*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.5900435899266435f;
-   pSH[15] = fTmpA*fC0;
-   pSH[9] = fTmpA*fS0;
-   fTmpB = -1.770130769779931f*fZ;
-   pSH[23] = fTmpB*fC0;
-   pSH[17] = fTmpB*fS0;
-   fTmpC = -4.403144694917254f*fZ2 + 0.4892382994352505f;
-   pSH[33] = fTmpC*fC0;
-   pSH[27] = fTmpC*fS0;
-   fTmpA = fZ*(-10.13325785466416f*fZ2 + 2.763615778544771f);
-   pSH[45] = fTmpA*fC0;
-   pSH[39] = fTmpA*fS0;
-   fTmpB = 2.207940216581962f*fZ*fTmpA + -0.959403223600247f*fTmpC;
-   pSH[59] = fTmpB*fC0;
-   pSH[53] = fTmpB*fS0;
-   fTmpC = 2.15322168769582f*fZ*fTmpB + -0.9752173865600178f*fTmpA;
-   pSH[75] = fTmpC*fC0;
-   pSH[69] = fTmpC*fS0;
-   fTmpA = 2.118044171189805f*fZ*fTmpC + -0.9836628449792094f*fTmpB;
-   pSH[93] = fTmpA*fC0;
-   pSH[87] = fTmpA*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6258357354491763f;
-   pSH[24] = fTmpA*fC1;
-   pSH[16] = fTmpA*fS1;
-   fTmpB = 2.075662314881041f*fZ;
-   pSH[34] = fTmpB*fC1;
-   pSH[26] = fTmpB*fS1;
-   fTmpC = 5.550213908015966f*fZ2 + -0.5045649007287241f;
-   pSH[46] = fTmpC*fC1;
-   pSH[38] = fTmpC*fS1;
-   fTmpA = fZ*(13.49180504672677f*fZ2 + -3.113493472321562f);
-   pSH[60] = fTmpA*fC1;
-   pSH[52] = fTmpA*fS1;
-   fTmpB = 2.304886114323221f*fZ*fTmpA + -0.9481763873554654f*fTmpC;
-   pSH[76] = fTmpB*fC1;
-   pSH[68] = fTmpB*fS1;
-   fTmpC = 2.229177150706235f*fZ*fTmpB + -0.9671528397231821f*fTmpA;
-   pSH[94] = fTmpC*fC1;
-   pSH[86] = fTmpC*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.6563820568401703f;
-   pSH[35] = fTmpA*fC0;
-   pSH[25] = fTmpA*fS0;
-   fTmpB = -2.366619162231753f*fZ;
-   pSH[47] = fTmpB*fC0;
-   pSH[37] = fTmpB*fS0;
-   fTmpC = -6.745902523363385f*fZ2 + 0.5189155787202604f;
-   pSH[61] = fTmpC*fC0;
-   pSH[51] = fTmpC*fS0;
-   fTmpA = fZ*(-17.24955311049054f*fZ2 + 3.449910622098108f);
-   pSH[77] = fTmpA*fC0;
-   pSH[67] = fTmpA*fS0;
-   fTmpB = 2.401636346922062f*fZ*fTmpA + -0.9392246042043708f*fTmpC;
-   pSH[95] = fTmpB*fC0;
-   pSH[85] = fTmpB*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.6831841051919144f;
-   pSH[48] = fTmpA*fC1;
-   pSH[36] = fTmpA*fS1;
-   fTmpB = 2.645960661801901f*fZ;
-   pSH[62] = fTmpB*fC1;
-   pSH[50] = fTmpB*fS1;
-   fTmpC = 7.984991490893139f*fZ2 + -0.5323327660595426f;
-   pSH[78] = fTmpC*fC1;
-   pSH[66] = fTmpC*fS1;
-   fTmpA = fZ*(21.39289019090864f*fZ2 + -3.775215916042701f);
-   pSH[96] = fTmpA*fC1;
-   pSH[84] = fTmpA*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpA = -0.7071627325245963f;
-   pSH[63] = fTmpA*fC0;
-   pSH[49] = fTmpA*fS0;
-   fTmpB = -2.91570664069932f*fZ;
-   pSH[79] = fTmpB*fC0;
-   pSH[65] = fTmpB*fS0;
-   fTmpC = -9.263393182848905f*fZ2 + 0.5449054813440533f;
-   pSH[97] = fTmpC*fC0;
-   pSH[83] = fTmpC*fS0;
-   fC1 = fX*fC0 - fY*fS0;
-   fS1 = fX*fS0 + fY*fC0;
-
-   fTmpA = 0.72892666017483f;
-   pSH[80] = fTmpA*fC1;
-   pSH[64] = fTmpA*fS1;
-   fTmpB = 3.177317648954698f*fZ;
-   pSH[98] = fTmpB*fC1;
-   pSH[82] = fTmpB*fS1;
-   fC0 = fX*fC1 - fY*fS1;
-   fS0 = fX*fS1 + fY*fC1;
-
-   fTmpC = -0.7489009518531884f;
-   pSH[99] = fTmpC*fC0;
-   pSH[81] = fTmpC*fS0;
-}
-
+/**
+ * @brief A simple pseudo-random number generator for creating white noise.
+ */
 class NoiseGenerator {
 private:
     std::mt19937 gen;
@@ -777,313 +145,335 @@ public:
     }
 };
 
-// Simple SIMD bands structure to hold multiple frequency bands
+/**
+ * @brief A structure to hold multiple frequency bands for one audio sample.
+ */
 struct SIMDBands {
     std::vector<float> bands;
-    
     SIMDBands(int numBands) : bands(numBands, 0.0f) {}
-    
-    SIMDBands& operator+=(const SIMDBands& other) {
-        for (size_t i = 0; i < bands.size(); i++) {
-            bands[i] += other.bands[i];
-        }
-        return *this;
-    }
 };
 
-// Filter coefficients for a single crossover band
-struct FilterCoefficients {
-    float a[6]; // Feed-forward coefficients
-    float b[4]; // Feedback coefficients
-};
-
-// History state for a single filter
-struct FilterState {
-    std::vector<float> input;  // Input history
-    std::vector<float> output; // Output history
-    
-    FilterState() : input(4, 0.0f), output(4, 0.0f) {}
-    
-    void reset() {
-        std::fill(input.begin(), input.end(), 0.0f);
-        std::fill(output.begin(), output.end(), 0.0f);
-    }
-};
-
+/**
+ * @brief A Linkwitz-Riley crossover filter bank.
+ */
 class CrossoverFilter {
 public:
-    class History {
-    public:
-        History(int numBands) : states(numBands - 1) {}
-        
-        void reset() {
-            for (auto& state : states) {
-                state.reset();
-            }
-        }
-        
-        std::vector<FilterState> states;
+    // State for a single biquad filter section.
+    struct BiquadState {
+        float z1 = 0.0f, z2 = 0.0f;
+        void reset() { z1 = 0.0f; z2 = 0.0f; }
     };
-    
+
+    // Coefficients for a single biquad filter.
+    struct BiquadCoeffs {
+        float b0 = 0.0f, b1 = 0.0f, b2 = 0.0f; // Feedforward
+        float a1 = 0.0f, a2 = 0.0f;           // Feedback
+    };
+
     CrossoverFilter(float sampleRate, const std::vector<float>& freqPoints) 
         : sampleRate(sampleRate)
         , numBands(freqPoints.size() + 1)
-        , coefficients((freqPoints.size()) * 2) // Two sets per crossover point
+        , filterCoeffs(numBands)
+        , filterStates(numBands)
     {
-        for (size_t i = 0; i < freqPoints.size(); i++) {
-            float w0 = 2.0f * M_PI * freqPoints[i] / sampleRate;
-            computeButterworth2Coefficients(w0, i);
+        // Design the parallel filter bank.
+        for (size_t i = 0; i < numBands; ++i) {
+            // Band 0 is the first low-pass filter.
+            if (i == 0) {
+                designLinkwitzRiley(freqPoints[i], filterCoeffs[i], false);
+            } 
+            // The last band is the final high-pass filter.
+            else if (i == numBands - 1) {
+                designLinkwitzRiley(freqPoints[i-1], filterCoeffs[i], true);
+            }
+            // Intermediate bands are band-pass filters.
+            else {
+                // A 4th-order bandpass is a cascade of a 4th-order HP and 4th-order LP
+                filterCoeffs[i].resize(4);
+                std::vector<BiquadCoeffs> hp_coeffs, lp_coeffs;
+                designLinkwitzRiley(freqPoints[i-1], hp_coeffs, true);
+                designLinkwitzRiley(freqPoints[i], lp_coeffs, false);
+                filterCoeffs[i][0] = hp_coeffs[0];
+                filterCoeffs[i][1] = hp_coeffs[1];
+                filterCoeffs[i][2] = lp_coeffs[0];
+                filterCoeffs[i][3] = lp_coeffs[1];
+            }
+            filterStates[i].resize(filterCoeffs[i].size());
         }
     }
-    
-    void process(History& history, const float* input, SIMDBands* output, int numSamples) {
-        for (int i = 0; i < numSamples; i++) {
-            // Start with input value in all bands
-            SIMDBands current(numBands);
-            for (int band = 0; band < numBands; band++) {
-                current.bands[band] = input[i];
+
+    void reset() {
+        for (auto& band_states : filterStates) {
+            for (auto& state : band_states) {
+                state.reset();
             }
-            
-            // Apply crossover filters
-            for (int crossover = 0; crossover < numBands - 1; crossover++) {
-                FilterState& state = history.states[crossover];
-                
-                // Apply filters to bands above the crossover point
-                for (int band = crossover + 1; band < numBands; band++) {
-                    // Apply highpass filter
-                    current.bands[band] = applyFilter(current.bands[band], 
-                                                    coefficients[crossover * 2 + 1],
-                                                    state);
+        }
+    }
+
+    void process(const float* input, SIMDBands* output, int numSamples) {
+        for (int i = 0; i < numSamples; ++i) {
+            for (int band = 0; band < numBands; ++band) {
+                float sample = input[i];
+                for (size_t stage = 0; stage < filterCoeffs[band].size(); ++stage) {
+                    sample = applyBiquad(sample, filterCoeffs[band][stage], filterStates[band][stage]);
                 }
-                
-                // Apply lowpass filter to band at crossover point
-                current.bands[crossover] = applyFilter(current.bands[crossover],
-                                                     coefficients[crossover * 2],
-                                                     state);
+                output[i].bands[band] = sample;
             }
-            
-            output[i] = current;
         }
     }
-    
+
 private:
     float sampleRate;
     int numBands;
-    std::vector<FilterCoefficients> coefficients;
-    
-    void computeButterworth2Coefficients(float w0, int crossoverIndex) {
-        // Compute lowpass coefficients
-        FilterCoefficients& lowpass = coefficients[crossoverIndex * 2];
-        float w0LP = 1.0f / std::tan(w0 / 2.0f);
-        computeButterworth2LowPass(w0LP, lowpass);
+    std::vector<std::vector<BiquadCoeffs>> filterCoeffs;
+    std::vector<std::vector<BiquadState>> filterStates;
+
+    void designLinkwitzRiley(float freq, std::vector<BiquadCoeffs>& coeffs, bool isHighpass) {
+        coeffs.resize(2);
+        float w0 = 2.0f * M_PI * freq / sampleRate;
+        float cos_w0 = std::cos(w0);
+        float sin_w0 = std::sin(w0);
+        float alpha = sin_w0 / (2.0f * (1.0f / std::sqrt(2.0f))); // Q = 1/sqrt(2) for Butterworth
+
+        float b0, b1, b2, a0, a1, a2;
+        if (isHighpass) {
+            b0 = (1.0f + cos_w0) / 2.0f;
+            b1 = -(1.0f + cos_w0);
+            b2 = (1.0f + cos_w0) / 2.0f;
+        } else { // Lowpass
+            b0 = (1.0f - cos_w0) / 2.0f;
+            b1 = 1.0f - cos_w0;
+            b2 = (1.0f - cos_w0) / 2.0f;
+        }
+        a0 = 1.0f + alpha;
+        a1 = -2.0f * cos_w0;
+        a2 = 1.0f - alpha;
+
+        coeffs[0].b0 = b0 / a0;
+        coeffs[0].b1 = b1 / a0;
+        coeffs[0].b2 = b2 / a0;
+        coeffs[0].a1 = a1 / a0;
+        coeffs[0].a2 = a2 / a0;
         
-        // Compute highpass coefficients  
-        FilterCoefficients& highpass = coefficients[crossoverIndex * 2 + 1];
-        float w0HP = std::tan(w0 / 2.0f);
-        computeButterworth2HighPass(w0HP, highpass);
+        // 4th order is two identical 2nd order filters cascaded
+        coeffs[1] = coeffs[0];
     }
-    
-    void computeButterworth2LowPass(float w0, FilterCoefficients& coeff) {
-        float B1 = -2.0f * std::cos(M_PI * 3.0f / 4.0f);
-        float w0squared = w0 * w0;
-        float A = 1.0f + B1 * w0 + w0squared;
-        
-        coeff.a[0] = 1.0f / A;
-        coeff.a[1] = 2.0f;
-        coeff.a[2] = 1.0f;
-        coeff.b[0] = 2.0f * (1.0f - w0squared) * coeff.a[0];
-        coeff.b[1] = (1.0f - B1 * w0 + w0squared) * coeff.a[0];
-        
-        // Second stage coefficients
-        coeff.a[3] = coeff.a[0];
-        coeff.a[4] = coeff.a[1];
-        coeff.a[5] = coeff.a[2];
-        coeff.b[2] = coeff.b[0];
-        coeff.b[3] = coeff.b[1];
-    }
-    
-    void computeButterworth2HighPass(float w0, FilterCoefficients& coeff) {
-        computeButterworth2LowPass(w0, coeff);
-        coeff.a[1] = -coeff.a[1];
-        coeff.a[4] = -coeff.a[4];
-        coeff.b[0] = -coeff.b[0];
-        coeff.b[2] = -coeff.b[2];
-    }
-    
-    float applyFilter(float input, const FilterCoefficients& coeff, FilterState& state) {
-        // First biquad stage
-        float in1 = coeff.a[0] * input;
-        float out1 = (in1 - coeff.b[0] * state.output[0]) +
-                    (coeff.a[1] * state.input[0] - coeff.b[1] * state.output[1]) +
-                    coeff.a[2] * state.input[1];
-        
-        // Update first stage history
-        state.input[1] = state.input[0];
-        state.input[0] = in1;
-        state.output[1] = state.output[0];
-        state.output[0] = out1;
-        
-        // Second biquad stage
-        float in2 = coeff.a[3] * out1;
-        float out2 = (in2 - coeff.b[2] * state.output[2]) +
-                    (coeff.a[4] * state.input[2] - coeff.b[3] * state.output[3]) +
-                    coeff.a[5] * state.input[3];
-        
-        // Update second stage history
-        state.input[3] = state.input[2];
-        state.input[2] = in2;
-        state.output[3] = state.output[2];
-        state.output[2] = out2;
-        
-        return out2;
+
+    /**
+     * @brief Applies a biquad filter using the stable Direct Form II Transposed structure.
+     */
+    float applyBiquad(float sample, const BiquadCoeffs& c, BiquadState& s) {
+        float out = c.b0 * sample + s.z1;
+        s.z1 = c.b1 * sample - c.a1 * out + s.z2;
+        s.z2 = c.b2 * sample - c.a2 * out;
+        return out;
     }
 };
 
+/**
+ * @brief Generates a multi-channel Ambisonic impulse response based on acoustic path data.
+ */
 py::array_t<float> generate_ambisonic_ir(
     int order,
     py::array_t<float> listener_directions,
     py::array_t<float> intensities,
     py::array_t<float> distances,
     py::array_t<float> speeds,
-    py::array_t<int> path_types,
     py::array_t<float> frequency_points,
     float sample_rate,
-    bool normalize = true
+    bool precise_early_reflections = false,
+    bool normalize = true,
+    double early_reflection_threshold = 0.01
 ) {
-    // Input validation
-    if (order < 1 || order > 9) {
-        throw std::runtime_error("Order must be between 1 and 9");
+    if (order < 0) {
+        throw std::runtime_error("Order must be non-negative.");
     }
     
-    // Get array dimensions
-    int num_paths = listener_directions.shape(0);
-    int num_bands = intensities.shape(1);
-    int num_coefficients = (order + 1) * (order + 1);
-    
-    // Get frequency points
-    auto freq_buf = frequency_points.request();
-    std::vector<float> freq_points((float*)freq_buf.ptr, (float*)freq_buf.ptr + freq_buf.size);
-    
-    if (freq_points.size() + 1 != size_t(num_bands)) {
-        throw std::runtime_error("Number of frequency points must be number of bands - 1");
-    }
-    
-    // Calculate IR length with padding
+    auto directions_buf = listener_directions.unchecked<2>();
+    auto intensities_buf = intensities.unchecked<2>();
     auto distances_buf = distances.unchecked<1>();
     auto speeds_buf = speeds.unchecked<1>();
-    float max_delay = 0.0f;
-    for (int i = 0; i < num_paths; i++) {
-        float delay = distances_buf(i) / speeds_buf(i);
-        max_delay = std::max(max_delay, delay);
+    auto freq_buf = frequency_points.request();
+
+    ssize_t num_paths = directions_buf.shape(0);
+    ssize_t num_bands = intensities_buf.shape(1);
+    const unsigned int u_order = order;
+    int num_coefficients = (u_order + 1) * (u_order + 1);
+    
+    std::vector<float> freq_points(static_cast<float*>(freq_buf.ptr), static_cast<float*>(freq_buf.ptr) + freq_buf.size);
+    if (freq_points.size() != static_cast<size_t>(num_bands - 1)) {
+        throw std::runtime_error("Number of frequency points must be number of bands - 1.");
     }
     
-    const int filter_padding = 2048;
-    int ir_length = static_cast<int>(std::ceil(max_delay * sample_rate)) + filter_padding;
-    
-    // Generate noise
+    // Pre-calculate SH Normalization Factors
+    // These factors are constant for a given order, so we compute them once
+    // to avoid redundant calculations inside the main processing loops.
+    std::vector<std::vector<double>> sh_norm_factors(u_order + 1, std::vector<double>(u_order + 1));
+    for (unsigned int l = 0; l <= u_order; ++l) {
+        for (unsigned int m = 0; m <= l; ++m) {
+            sh_norm_factors[l][m] = calculate_sh_normalization(l, m);
+        }
+    }
+
+    // Calculate IR Length
+    float max_delay = 0.0f;
+    for (ssize_t i = 0; i < num_paths; ++i) {
+        max_delay = std::max(max_delay, distances_buf(i) / speeds_buf(i));
+    }
+    // Define filter padding as a named constant for clarity.
+    const int FILTER_TAIL_PADDING = 2048;
+    int ir_length = static_cast<int>(std::ceil(max_delay * sample_rate)) + FILTER_TAIL_PADDING;
+
+    // Create Noise and Output Buffers
     std::vector<float> raw_noise(ir_length);
-    NoiseGenerator noise_gen(42);
-    for (int i = 0; i < ir_length; i++) {
+    NoiseGenerator noise_gen;
+    for (int i = 0; i < ir_length; ++i) {
         raw_noise[i] = noise_gen.sample();
     }
     
-    // Create and initialize crossover filter
     CrossoverFilter crossover(sample_rate, freq_points);
-    CrossoverFilter::History noise_history(num_bands);
+    std::vector<SIMDBands> filtered_noise(ir_length, SIMDBands(num_bands));
+    crossover.process(raw_noise.data(), filtered_noise.data(), ir_length);
     
-    // Create filtered noise buffer with proper initialization
-    std::vector<SIMDBands> filtered_noise;
-    filtered_noise.reserve(ir_length);
-    for (int i = 0; i < ir_length; i++) {
-        filtered_noise.emplace_back(num_bands);
-    }
-    
-    // Filter noise through crossover
-    crossover.process(noise_history, raw_noise.data(), filtered_noise.data(), ir_length);
-    
-    // Process paths
-    auto directions_buf = listener_directions.unchecked<2>();
-    auto intensities_buf = intensities.unchecked<2>();
-    
-    // Initialize band IRs
-    std::vector<std::vector<SIMDBands>> band_irs;
-    band_irs.resize(num_coefficients);
-    for (int i = 0; i < num_coefficients; i++) {
-        band_irs[i].resize(ir_length, SIMDBands(num_bands));
-    }
-    
-    std::vector<float> sh_coeffs(num_coefficients);
-    
-    for (int path = 0; path < num_paths; path++) {
-        // Calculate delay
-        float delay = distances_buf(path) / speeds_buf(path);
-        int delay_samples = static_cast<int>(std::floor(delay * sample_rate));
-        if (delay_samples >= ir_length) continue;
-        
-        // Get normalized direction
-        float dx = directions_buf(path, 0);
-        float dy = directions_buf(path, 1);
-        float dz = directions_buf(path, 2);
-        
-        float length = std::sqrt(dx*dx + dy*dy + dz*dz);
-        if (length > 0) {
-            dx /= length;
-            dy /= length;
-            dz /= length;
-        }
-        
-        // Evaluate spherical harmonics
-        switch(order) {
-            case 1: SHEval2(dx, dy, dz, sh_coeffs.data()); break;
-            case 2: SHEval3(dx, dy, dz, sh_coeffs.data()); break;
-            case 3: SHEval4(dx, dy, dz, sh_coeffs.data()); break;
-            case 4: SHEval5(dx, dy, dz, sh_coeffs.data()); break;
-            case 5: SHEval6(dx, dy, dz, sh_coeffs.data()); break;
-            case 6: SHEval7(dx, dy, dz, sh_coeffs.data()); break;
-            case 7: SHEval8(dx, dy, dz, sh_coeffs.data()); break;
-            case 8: SHEval9(dx, dy, dz, sh_coeffs.data()); break;
-            case 9: SHEval10(dx, dy, dz, sh_coeffs.data()); break;
-        }
-        
-        // Add contribution to band IRs
-        for (int coeff = 0; coeff < num_coefficients; coeff++) {
-            for (int band = 0; band < num_bands; band++) {
-                float intensity = std::sqrt(intensities_buf(path, band));
-                band_irs[coeff][delay_samples].bands[band] += sh_coeffs[coeff] * intensity;
-            }
-        }
-    }
-    
-    // Create output array
-    std::vector<ssize_t> output_shape = {num_coefficients, ir_length};
+    std::vector<ssize_t> output_shape = {static_cast<ssize_t>(num_coefficients), static_cast<ssize_t>(ir_length)};
     auto result = py::array_t<float>(output_shape);
     auto result_buf = result.mutable_unchecked<2>();
-    
-    // Generate final waveforms
-    for (int coeff = 0; coeff < num_coefficients; coeff++) {
-        for (int i = 0; i < ir_length; i++) {
-            float sum = 0.0f;
-            for (int band = 0; band < num_bands; band++) {
-                sum += band_irs[coeff][i].bands[band] * filtered_noise[i].bands[band];
+    std::fill(result.mutable_data(), result.mutable_data() + result.size(), 0.0f);
+
+    // Path Separation
+    std::vector<int> late_reflection_indices;
+    std::vector<int> early_reflection_indices;
+    std::vector<double> path_energies(num_paths, 0.0);
+
+    if (num_paths > 0) {
+        double total_energy = 0;
+        for(int path = 0; path < num_paths; ++path) {
+            for(int band = 0; band < num_bands; ++band) {
+                path_energies[path] += intensities_buf(path, band);
             }
-            result_buf(coeff, i) = sum;
+            total_energy += path_energies[path];
+        }
+
+        if (precise_early_reflections) { // Separate paths into early and late reflections based on energy threshold
+            const double energy_threshold_value = total_energy * early_reflection_threshold;
+            for(int path = 0; path < num_paths; ++path) {
+                if (path_energies[path] > energy_threshold_value && total_energy > 0) {
+                    early_reflection_indices.push_back(path);
+                } else {
+                    late_reflection_indices.push_back(path);
+                }
+            }
+        } else {
+            late_reflection_indices.resize(num_paths);
+            std::iota(late_reflection_indices.begin(), late_reflection_indices.end(), 0);
         }
     }
     
-    // Normalize if requested
+    // Synthesize Late Reflections
+    if (!late_reflection_indices.empty()) {
+        // Create and populate histograms for the late field
+        std::vector<std::vector<float>> binned_energy_per_band(num_bands, std::vector<float>(ir_length, 0.0f));
+        std::vector<std::vector<float>> binned_sh_sum(num_coefficients, std::vector<float>(ir_length, 0.0f));
+        std::vector<float> binned_total_energy(ir_length, 0.0f);
+        std::vector<float> sh_coeffs(num_coefficients);
+
+        for (int path_idx : late_reflection_indices) {
+            float delay = distances_buf(path_idx) / speeds_buf(path_idx);
+            int delay_samples = static_cast<int>(std::floor(delay * sample_rate));
+            if (delay_samples >= ir_length) continue;
+
+            // Accumulate energy per band for this time bin
+            for (ssize_t band = 0; band < num_bands; ++band) {
+                binned_energy_per_band[band][delay_samples] += intensities_buf(path_idx, band);
+            }
+            
+            // Accumulate total energy and energy-weighted SH for this time bin
+            float total_path_energy = path_energies[path_idx];
+            binned_total_energy[delay_samples] += total_path_energy;
+            
+            float dx = directions_buf(path_idx, 0), dy = directions_buf(path_idx, 1), dz = directions_buf(path_idx, 2);
+            float length = std::sqrt(dx*dx + dy*dy + dz*dz);
+            if (length > 1e-6f) { dx /= length; dy /= length; dz /= length; }
+            evaluate_spherical_harmonics(u_order, dx, dy, dz, sh_norm_factors, sh_coeffs);
+            
+            for (int coeff = 0; coeff < num_coefficients; ++coeff) {
+                binned_sh_sum[coeff][delay_samples] += sh_coeffs[coeff] * total_path_energy;
+            }
+        }
+
+        // Synthesize audio from the populated histograms
+        std::vector<float> normalized_sh_for_bin(num_coefficients);
+        for (int t = 0; t < ir_length; ++t) {
+            if (binned_total_energy[t] < 1e-9f) continue;
+
+            // Calculate the energy-weighted average SH for this time bin
+            for (int coeff = 0; coeff < num_coefficients; ++coeff) {
+                normalized_sh_for_bin[coeff] = binned_sh_sum[coeff][t] / binned_total_energy[t];
+            }
+
+            // Calculate the pressure-weighted noise sample from all bands
+            float weighted_noise_sample = 0.0f;
+            for (ssize_t band = 0; band < num_bands; ++band) {
+                float pressure_envelope = std::sqrt(binned_energy_per_band[band][t]);
+                weighted_noise_sample += pressure_envelope * filtered_noise[t].bands[band];
+            }
+
+            // Apply the spatial information to the noisy sample and add to result
+            for (int coeff = 0; coeff < num_coefficients; ++coeff) {
+                result_buf(coeff, t) += normalized_sh_for_bin[coeff] * weighted_noise_sample;
+            }
+        }
+    }
+
+    // Synthesize Early Reflections (Discrete)
+    if (precise_early_reflections && !early_reflection_indices.empty()) {
+        CrossoverFilter impulse_crossover(sample_rate, freq_points);
+        std::vector<float> sh_coeffs(num_coefficients);
+        
+        for (int path_idx : early_reflection_indices) {
+            float delay = distances_buf(path_idx) / speeds_buf(path_idx);
+            int delay_samples = static_cast<int>(std::floor(delay * sample_rate));
+            if (delay_samples >= ir_length) continue;
+
+            float dx = directions_buf(path_idx, 0), dy = directions_buf(path_idx, 1), dz = directions_buf(path_idx, 2);
+            float length = std::sqrt(dx*dx + dy*dy + dz*dz);
+            if (length > 1e-6f) { dx /= length; dy /= length; dz /= length; }
+            evaluate_spherical_harmonics(u_order, dx, dy, dz, sh_norm_factors, sh_coeffs);
+
+            int impulse_len = ir_length - delay_samples;
+            std::vector<SIMDBands> impulse_response(impulse_len, SIMDBands(num_bands));
+            std::vector<float> raw_impulse(impulse_len, 0.0f);
+            raw_impulse[0] = 1.0f; // dirac
+
+            impulse_crossover.reset();
+            impulse_crossover.process(raw_impulse.data(), impulse_response.data(), impulse_len);
+
+            for (int i = 0; i < impulse_len; ++i) {
+                float weighted_impulse_sample = 0.0f;
+                 for (ssize_t band = 0; band < num_bands; ++band) {
+                    weighted_impulse_sample += std::sqrt(intensities_buf(path_idx, band)) * impulse_response[i].bands[band];
+                }
+                for (int coeff = 0; coeff < num_coefficients; ++coeff) {
+                    // Add to the existing late-field result
+                    result_buf(coeff, i + delay_samples) += sh_coeffs[coeff] * weighted_impulse_sample;
+                }
+            }
+        }
+    }
+    
+    // Normalization
     if (normalize) {
         float max_sample = 0.0f;
-        
-        for (int coeff = 0; coeff < num_coefficients; coeff++) {
-            for (int i = 0; i < ir_length; i++) {
+        for (int coeff = 0; coeff < num_coefficients; ++coeff) {
+            for (int i = 0; i < ir_length; ++i) {
                 max_sample = std::max(max_sample, std::abs(result_buf(coeff, i)));
             }
         }
         
-        if (max_sample > 0.0f) {
+        if (max_sample > 1e-6f) {
             float scale = 1.0f / max_sample;
-            for (int coeff = 0; coeff < num_coefficients; coeff++) {
-                for (int i = 0; i < ir_length; i++) {
+            for (int coeff = 0; coeff < num_coefficients; ++coeff) {
+                for (int i = 0; i < ir_length; ++i) {
                     result_buf(coeff, i) *= scale;
                 }
             }
@@ -1093,8 +483,8 @@ py::array_t<float> generate_ambisonic_ir(
     return result;
 }
 
-PYBIND11_MODULE(spherical_harmonics, m) {
-    m.doc() = "Spherical Harmonics processor for generating Ambisonic IR waveforms";
+PYBIND11_MODULE(spherical_harmonics_rt, m) {
+    m.doc() = "Runtime Spherical Harmonics processor for generating Ambisonic IR waveforms (Optimized)";
     
     m.def("generate_ambisonic_ir", &generate_ambisonic_ir,
           "Generate Ambisonic IR waveforms using noise-based synthesis",
@@ -1103,8 +493,10 @@ PYBIND11_MODULE(spherical_harmonics, m) {
           py::arg("intensities"), 
           py::arg("distances"),
           py::arg("speeds"),
-          py::arg("path_types"),
           py::arg("frequency_points"),
           py::arg("sample_rate"),
-          py::arg("normalize") = true);
+          py::arg("precise_early_reflections") = false,
+          py::arg("normalize") = true,
+          py::arg("early_reflection_threshold") = 0.01,
+          py::return_value_policy::take_ownership);
 }
