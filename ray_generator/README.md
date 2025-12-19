@@ -1,6 +1,9 @@
 # Ray Generator
+
 Please refer to `examples/mesh_sim.py` and `tests/rir_test.py` for usage on dumping the raw path!
 Please follow this compiling guide to install, instead of installing from pip.
+
+## Path Data Keys
 
 The dump path keys are:
 - `source_indices`: Which sound source each path originated from
@@ -17,78 +20,290 @@ The dump path keys are:
 Frequency bands are as defined in `src/pygsound/src/Context.cpp`. Change as needed.
 See `pipeline.py` for a pipeline generating ray SIRs.
 
-====================================================================================================
+---
 
-Copyright (C) 2010-2020 Carl Schissler, University of North Carolina at Chapel Hill.
-All rights reserved.
+## Dependencies
 
-pygsound
-=====
-
-[**GSound**](http://gamma.cs.unc.edu/GSOUND/) is a physically-based sound propagation package used for acoustic simulations in various environments, developed by Dr [Carl Schissler](http://www.linkedin.com/in/carl-schissler-a56aab30). **pygsound** is the Python package that wraps **GSound**'s codebase for efficiently computing room impulse responses (RIRs) with specular and diffuse reflections. **GSound** is powerful enough to be used for sound simulation in 3D scenes with complicated geometry and acoustic materials. This repo's python API has not exposed all of **GSound**'s components. But we do provide the complete C++ source code and welcome pull requests if you made useful modifications (mainly the python API).
-
-Dependencies
---------
-On Linux, install dependencies using:
-```
+### Linux
+```bash
 sudo apt-get update
-sudo apt-get -y install libfftw3-dev
+sudo apt-get -y install libfftw3-dev python3-dev zlib1g-dev
 ```
 
-On MacOS, install dependencies using:
-```
+### MacOS
+```bash
 brew update
 brew install fftw
 ```
 
-Installation
---------
-### Install from PyPI
-```
-pip install pygsound
-```
-If you have difficulty installing from PyPI on incompatible platforms, or if you want the most up-to-date changes, continue reading to install from source.
-### Install from source
-This repo has been configured to build with CMake (version>=12), and mainly tested on Linux and MacOS.
+---
 
-First clone this repo with:
-```
+## Installation (CPU Only)
+
+```bash
 git clone --recurse-submodules https://github.com/GAMMA-UMD/pygsound.git
-``` 
-We assume you have python3 installed. Then you can build and test with
-```
-cd pygsound
-python3 setup.py develop
-python3 setup.py test
-```
-or directly install it as a python package with
-```
 cd pygsound
 pip3 install .
 ```
 
-Usage
---------
+---
 
-See `examples` folder (extra modules may be required). You need to `cd examples` and run `python3 mesh_sim.py` (we recommend starting with this one). This script demonstrates two equivalent ways to define the environment for sound propagation, and save the impulse response as an audio file. You can use a `.obj` file with an optional `.mtl` file with the same name to define the room geometry and materials. In this case, the `.mtl` file has two extra rows compared with conventional `.mtl` file used for visual rendering:
-```
-sound_a 0.5 0.6 0.6 0.7 0.75 0.8 0.9 0.9  # sound absorption coefficients, for 8 octave bands [62.5, 125, 250, 500, 1000, 2000, 4000, 8000]Hz
-sound_s 0.1 0.1 0.1 0.1 0.1 0.1 0.1 0.1 # sound scattering coefficients, if you don't know the details of diffuse/specular reflections, keep it low
-```
-or directly create a shoebox shaped room using our API:
-```
-room = ps.createbox(dim_x, dim_y, dim_z, absorption_coefficient, scattering_coefficient)
-```
-The benefit of using the `.obj` style is that you can easily define different reflection/absorption coefficients for each triangle element for each frequency sub-band.
+## GPU Acceleration (OptiX)
 
-Contact
---------
-This package is maintained by [Zhenyu Tang](https://royjames.github.io/zhy/). For code issues, please open new issues or join discussions in our [github repo](https://github.com/GAMMA-UMD/pygsound). For research related questions, please directly contact corresponding authors.
+GPU acceleration uses NVIDIA OptiX for ray tracing. This provides identical results to CPU but can be faster for complex scenes.
 
-Citations
---------
+### Requirements
+- NVIDIA GPU (RTX series recommended)
+- NVIDIA Driver 525.60.13 or newer
+- CUDA Toolkit 11.x or 12.x
+- OptiX SDK 7.x (tested with 7.7.0)
 
-This sound propagation engine has been used for many research work of Dr Carl Schissler and other researchers in the [UMD GAMMA](https://gamma.umd.edu) group for audio rendering and impulse response generation purposes. For example:
+### Step 1: Install CUDA Toolkit
+
+```bash
+# Check if CUDA is installed
+nvcc --version
+
+# If not installed, follow NVIDIA's guide:
+# https://developer.nvidia.com/cuda-downloads
+```
+
+### Step 2: Download OptiX SDK
+
+1. Go to https://developer.nvidia.com/designworks/optix/download
+2. Create/login to NVIDIA Developer account
+3. Download OptiX SDK 7.7.0 (or compatible version)
+4. Extract to a location, e.g.:
+
+```bash
+# Linux
+chmod +x NVIDIA-OptiX-SDK-7.7.0-linux64-x86_64.sh
+./NVIDIA-OptiX-SDK-7.7.0-linux64-x86_64.sh --prefix=/path/to/install --skip-license
+
+# The SDK will be extracted to something like:
+# /path/to/install/NVIDIA-OptiX-SDK-7.7.0-linux64-x86_64/
+```
+
+### Step 3: Configure CMakeLists.txt
+
+Edit `CMakeLists.txt` to add your OptiX SDK path. Find the `find_path(OPTIX_INCLUDE_DIR_FOUND ...)` section and add your path:
+
+```cmake
+find_path(OPTIX_INCLUDE_DIR_FOUND optix.h
+    HINTS ${OPTIX_INCLUDE_DIR}
+    PATHS
+        # Add your OptiX SDK path here:
+        /path/to/NVIDIA-OptiX-SDK-7.7.0-linux64-x86_64/include
+        # Or use relative path from project root:
+        ${CMAKE_SOURCE_DIR}/../NVIDIA-OptiX-SDK-7.7.0-linux64-x86_64/include
+        # Default paths:
+        /usr/local/optix/include
+        /usr/include
+        $ENV{OPTIX_ROOT}/include
+        $ENV{OptiX_INSTALL_DIR}/include
+)
+```
+
+Alternatively, set environment variable before building:
+```bash
+export OPTIX_INCLUDE_DIR=/path/to/NVIDIA-OptiX-SDK-7.7.0-linux64-x86_64/include
+```
+
+### Step 4: Build with GPU Support
+
+```bash
+cd pygsound
+pip3 install .
+```
+
+The build system will automatically detect OptiX and enable GPU support.
+
+### Step 5: Verify GPU Support
+
+```python
+import pygsound as ps
+
+# Check if GPU is available
+print(ps.is_gpu_available())  # True if OptiX is working
+print(ps.device_info())       # Shows GPU details
+```
+
+---
+
+## Usage
+
+### Basic Usage (CPU)
+
+```python
+import pygsound as ps
+
+# Create room
+mesh = ps.createbox(10, 10, 10, 0.5, 0.5)  # 10x10x10 room
+
+# Configure simulation
+ctx = ps.Context()
+ctx.diffuse_count = 10000
+ctx.specular_count = 2000
+ctx.threads_count = 4
+
+# Create scene
+scene = ps.Scene()
+scene.setMesh(mesh)
+
+# Run simulation
+result = scene.getPathData(
+    [[2.0, 2.0, 2.0]],  # source position
+    [[8.0, 8.0, 8.0]],  # listener position
+    ctx
+)
+
+print(f"Found {result['path_data'][0]['num_paths']} paths")
+```
+
+### GPU Usage
+
+```python
+import pygsound as ps
+
+# Method 1: Per-call GPU flag
+result = scene.getPathData(
+    [[2.0, 2.0, 2.0]], [[8.0, 8.0, 8.0]], ctx,
+    use_gpu=True  # Use GPU for this call
+)
+
+# Method 2: Device enum
+result = scene.getPathData(
+    [[2.0, 2.0, 2.0]], [[8.0, 8.0, 8.0]], ctx,
+    use_gpu=True
+)
+
+# Check device info
+print(ps.device_info())
+```
+
+### Batch Processing
+
+Process multiple configurations efficiently:
+
+```python
+import pygsound as ps
+
+mesh = ps.createbox(10, 10, 10, 0.5, 0.5)
+ctx = ps.Context()
+ctx.diffuse_count = 5000
+ctx.specular_count = 1000
+
+# Define multiple source/listener configurations
+source_positions = [
+    [[2.0, 2.0, 2.0]],  # Config 1
+    [[3.0, 3.0, 3.0]],  # Config 2
+    [[4.0, 4.0, 4.0]],  # Config 3
+]
+
+listener_positions = [
+    [[8.0, 8.0, 8.0]],  # Config 1
+    [[7.0, 7.0, 7.0]],  # Config 2
+    [[6.0, 6.0, 6.0]],  # Config 3
+]
+
+# Batch process (CPU or GPU)
+results = ps.batch_process(
+    mesh,
+    source_positions,
+    listener_positions,
+    ctx,
+    device=ps.Device.GPU  # or ps.Device.CPU
+)
+
+for i, result in enumerate(results):
+    print(f"Config {i+1}: {result['path_data'][0]['num_paths']} paths")
+```
+
+### Device Configuration API
+
+```python
+import pygsound as ps
+
+# Device enum
+ps.Device.CPU   # CPU ray tracing
+ps.Device.GPU   # GPU (OptiX) ray tracing
+ps.Device.AUTO  # Auto-select based on availability
+
+# Check GPU availability
+ps.is_gpu_available()    # Returns True/False
+ps.device_info()         # Returns detailed info string
+
+# Get effective device (resolves AUTO)
+ps.get_effective_device()  # Returns Device.CPU or Device.GPU
+```
+
+---
+
+## Important Notes
+
+### Context Configuration
+**Always set `specular_count`** - Without setting `ctx.specular_count`, propagation may hang:
+```python
+ctx = ps.Context()
+ctx.diffuse_count = 5000
+ctx.specular_count = 1000  # Required!
+ctx.threads_count = 1
+```
+
+### Deterministic Results
+For reproducible CPU vs GPU comparisons, create **fresh** mesh, context, and scene objects for each run:
+```python
+# Fresh objects ensure identical random state
+mesh = ps.createbox(10, 10, 10, 0.5, 0.5)
+ctx = ps.Context()
+ctx.diffuse_count = 500
+ctx.specular_count = 100
+ctx.threads_count = 1
+scene = ps.Scene()
+scene.setMesh(mesh)
+result = scene.getPathData([[2.0, 2.0, 2.0]], [[8.0, 8.0, 8.0]], ctx, use_gpu=True)
+```
+
+### GPU Memory
+Ray tracing is **not GRAM-intensive**. A typical room uses < 1MB of GPU memory for acceleration structures.
+
+---
+
+## Running Tests
+
+```bash
+# Run all tests
+python -m pytest tests/ -v
+
+# Run specific test
+python -m pytest tests/rigorous_comparison_test.py -v
+
+# Run with output
+python -m pytest tests/ -v -s
+```
+
+---
+
+## Troubleshooting
+
+### OptiX not found during build
+- Ensure OptiX SDK path is correctly set in CMakeLists.txt or via `OPTIX_INCLUDE_DIR` environment variable
+- Check that the path contains `optix.h`
+
+### `optixInit() failed with error code: 7801`
+- OptiX ABI version mismatch. Your driver may be too old for the OptiX SDK version.
+- Solution: Either update your NVIDIA driver or use an older OptiX SDK (7.7.0 works with most drivers)
+
+### Simulation hangs
+- Ensure `ctx.specular_count` is set
+- Use `ctx.threads_count = 1` for debugging
+
+---
+
+## Citations
+
+This sound propagation engine has been used for many research works. Please cite:
+
 ```
 @inproceedings{schissler2011gsound,
   title={Gsound: Interactive sound propagation for games},
@@ -119,5 +334,14 @@ This sound propagation engine has been used for many research work of Dr Carl Sc
   pages={6969-6973},
 }
 ```
-For a complete list of relevant work you may want to cite depending on how you use this repo, see our [speech related research](https://gamma.umd.edu/researchdirections/speech/main) and [sound related research](https://gamma.umd.edu/researchdirections/sound/main).
 
+For a complete list of relevant work, see [speech related research](https://gamma.umd.edu/researchdirections/speech/main) and [sound related research](https://gamma.umd.edu/researchdirections/sound/main).
+
+---
+
+## License
+
+Copyright (C) 2010-2020 Carl Schissler, University of North Carolina at Chapel Hill.
+All rights reserved.
+
+**pygsound** is the Python package that wraps **GSound**'s codebase for efficiently computing room impulse responses (RIRs) with specular and diffuse reflections. See LICENSE.txt for details.

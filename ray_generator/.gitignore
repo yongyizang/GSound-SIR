@@ -1,2 +1,115 @@
-src/pygsound/pygsound.cpython-310-x86_64-linux-gnu.so
-src/pygsound.egg-info/PKG-INFO
+# =============================================================================
+# Build artifacts
+# =============================================================================
+build/
+dist/
+*.egg-info/
+
+# Compiled shared libraries
+*.so
+*.dylib
+*.dll
+*.a
+*.lib
+
+# =============================================================================
+# Python
+# =============================================================================
+__pycache__/
+*.py[cod]
+*$py.class
+.pytest_cache/
+.coverage
+htmlcov/
+*.egg
+.eggs/
+
+# Virtual environments
+venv/
+.venv/
+env/
+.env/
+
+# =============================================================================
+# IDE and Editors
+# =============================================================================
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+*.sublime-project
+*.sublime-workspace
+
+# =============================================================================
+# OS files
+# =============================================================================
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+Thumbs.db
+ehthumbs.db
+Desktop.ini
+
+# =============================================================================
+# CMake
+# =============================================================================
+CMakeCache.txt
+CMakeFiles/
+cmake_install.cmake
+Makefile
+*.cmake
+!CMakeLists.txt
+!*/CMakeLists.txt
+install_manifest.txt
+compile_commands.json
+CTestTestfile.cmake
+_deps/
+
+# =============================================================================
+# CUDA / OptiX
+# =============================================================================
+*.ptx
+*.cubin
+*.fatbin
+*.gpu
+*.i
+*.ii
+*.module_id
+
+# =============================================================================
+# Compiled objects
+# =============================================================================
+*.o
+*.obj
+*.d
+*.dwo
+
+# =============================================================================
+# Temporary and log files
+# =============================================================================
+*.tmp
+*.temp
+*.bak
+*.log
+*.cache
+
+# =============================================================================
+# Project-specific
+# =============================================================================
+# Pip installer (if downloaded)
+get-pip.py
+
+# Generated audio files
+*.wav
+*.mp3
+*.ogg
+*.flac
+
+# Generated JSON outputs (keep examples)
+!examples/*.json
+
+# OptiX disk cache (generated at runtime)
+OptixCache/

@@ -17,7 +17,9 @@ set( SOURCEFILES src/Context.cpp
 		src/Scene.cpp
 		src/SoundSource.cpp
 		src/Listener.cpp
-		src/MicrophoneArrays.cpp)
+		src/MicrophoneArrays.cpp
+		src/Device.cpp
+		src/BatchProcessor.cpp)
 
 message("Building pygsound release library")
 pybind11_add_module(pygsound SHARED ${SOURCEFILES} src/module.cpp)

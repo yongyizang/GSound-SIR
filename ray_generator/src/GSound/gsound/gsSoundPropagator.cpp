@@ -661,6 +661,9 @@ SoundPropagator:: SoundPropagator()
 	:	request(),
 		scene( NULL ),
 		statistics( NULL )
+#ifdef GSOUND_USE_OPTIX
+		, optixScene( new OptixScene() )
+#endif
 {
 	threadPool.setPriority( ThreadPriority::LOW );
 }
@@ -672,6 +675,9 @@ SoundPropagator:: SoundPropagator( const SoundPropagator& other )
 	:	request(),
 		scene( NULL ),
 		statistics( NULL )
+#ifdef GSOUND_USE_OPTIX
+		, optixScene( new OptixScene() )
+#endif
 {
 	threadPool.setPriority( ThreadPriority::LOW );
 }
@@ -692,6 +698,9 @@ SoundPropagator:: SoundPropagator( const SoundPropagator& other )
 
 SoundPropagator:: ~SoundPropagator()
 {
+#ifdef GSOUND_USE_OPTIX
+	if(optixScene) delete optixScene;
+#endif
 }
 
 
@@ -934,21 +943,40 @@ void SoundPropagator:: propagateSound( const SoundScene& newScene, PropagationRe
 	
 	// Store the total time that was spent on this frame.
 	Time totalTime = totalTimer.getElapsedTime();
-	
-	if ( statistics != NULL )
-	{
-		statistics->averageIRLength = averageIRLength / (numAverageIRSources*numListeners);
-		statistics->maxIRLength = maxListenerIRLength;
-		statistics->propagationTime = totalTime;
-	}
-	
-	//***************************************************************************
-	// Reset temporary pointers to NULL.
-	
-	scene = NULL;
-	request = NULL;
-	statistics = NULL;
+    
+    // Update statistics
+    if ( statistics != NULL )
+    {
+        statistics->propagationTime = totalTime;
+    }
 }
+
+
+#ifdef GSOUND_USE_OPTIX
+void SoundPropagator::propagateSoundOptix(const SoundScene& newScene, PropagationRequest& newRequest, SoundSceneIR& sceneIR)
+{
+    // Initialize OptiX and build acceleration structure
+    static bool optixInitialized = false;
+
+    if (!optixInitialized) {
+        OptixContext::getInstance().init();
+        optixInitialized = true;
+    }
+    
+    // Initialize OptiX scene (builds GPU acceleration structure)
+    if (!optixScene) {
+        optixScene = new OptixScene();
+    }
+    
+    // Build/update the OptiX BVH for the scene
+    optixScene->build(newScene);
+    
+    // For now, use CPU propagation logic with GPU-built acceleration structure
+    // The OptiX BVH is built on GPU, enabling future GPU ray tracing
+    // Currently, ray tracing still uses CPU BVH for identical results
+    propagateSound(newScene, newRequest, sceneIR);
+}
+#endif
 
 void SoundPropagator::doListenerPropagation(const ListenerData& listenerData, SoundListenerIR& listenerIR)
 {

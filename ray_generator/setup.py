@@ -6,7 +6,7 @@ import platform
 import subprocess
 import multiprocessing
 
-from distutils.version import LooseVersion
+from packaging.version import Version as LooseVersion
 from setuptools import setup, find_packages, Extension
 from setuptools.command.build_ext import build_ext
 

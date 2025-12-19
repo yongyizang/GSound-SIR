@@ -62,6 +62,10 @@
 #include "gsSoundSceneIR.h"
 #include "gsDebugCache.h"
 
+#ifdef GSOUND_USE_OPTIX
+#include "../optix/OptixScene.h"
+#endif
+
 
 //##########################################################################################
 //******************************  Start GSound Namespace  **********************************
@@ -134,6 +138,10 @@ class SoundPropagator
 			  * @param sceneIR - an object where the output propagation data is stored.
 			  */
 			virtual void propagateSound( const SoundScene& scene, PropagationRequest& request, SoundSceneIR& sceneIR );
+
+#ifdef GSOUND_USE_OPTIX
+			void propagateSoundOptix( const SoundScene& scene, PropagationRequest& request, SoundSceneIR& sceneIR );
+#endif
 			
 			/**
 			 * Gets detailed path data for all paths in a listener's IR
@@ -515,6 +523,9 @@ class SoundPropagator
 			/// A temporary pointer to an object which stores analytic information about propagation.
 			SoundStatistics* statistics;
 			
+#ifdef GSOUND_USE_OPTIX
+            OptixScene* optixScene = nullptr;
+#endif
 			
 			
 };

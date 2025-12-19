@@ -130,7 +130,7 @@ Scene::computeIR( std::vector<std::vector<float>> &_sources, std::vector<std::ve
 }
 
 py::dict Scene::getPathData(std::vector<SoundSource> &_sources, std::vector<Listener> &_listeners, 
-                           Context &_context, float energyPercentage, size_t maxRays)
+                           Context &_context, float energyPercentage, size_t maxRays, bool use_gpu)
 {
     int n_src = _sources.size();
     int n_lis = _listeners.size();
@@ -149,7 +149,16 @@ py::dict Scene::getPathData(std::vector<SoundSource> &_sources, std::vector<List
     }
 
     // Propagate sound to get paths
-    propagator.propagateSound(m_scene, _context.internalPropReq(), sceneIR);
+    if (use_gpu) {
+#ifdef GSOUND_USE_OPTIX
+        propagator.propagateSoundOptix(m_scene, _context.internalPropReq(), sceneIR);
+#else
+        std::cerr << "[Warning] OptiX not available, falling back to CPU." << std::endl;
+        propagator.propagateSound(m_scene, _context.internalPropReq(), sceneIR);
+#endif
+    } else {
+        propagator.propagateSound(m_scene, _context.internalPropReq(), sceneIR);
+    }
 
     using om::Size;
     using om::Index;
@@ -276,7 +285,7 @@ py::dict Scene::getPathData(std::vector<std::vector<float>> &_sources,
                            std::vector<std::vector<float>> &_listeners, 
                            Context &_context,
                            float src_radius, float src_power, float lis_radius,
-                           float energyPercentage, size_t maxRays)
+                           float energyPercentage, size_t maxRays, bool use_gpu)
 {
     int n_src = _sources.size();
     int n_lis = _listeners.size();
@@ -307,7 +316,7 @@ py::dict Scene::getPathData(std::vector<std::vector<float>> &_sources,
         listeners.push_back(*listener);
     }
 
-    py::dict _ret = getPathData(sources, listeners, _context, energyPercentage, maxRays);
+    py::dict _ret = getPathData(sources, listeners, _context, energyPercentage, maxRays, use_gpu);
     py::list pathDataList = _ret["path_data"];
 
     if (swapBuffer) {

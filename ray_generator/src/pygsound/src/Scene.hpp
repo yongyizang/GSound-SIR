@@ -32,7 +32,8 @@ public:
 						std::vector<Listener> &_listeners, 
 						Context &_context,
 						float energy_percentage = 100.0f,
-						size_t max_rays = 0);
+						size_t max_rays = 0,
+                        bool use_gpu = false);
 	py::dict getPathData(std::vector<std::vector<float>> &_sources, 
 						std::vector<std::vector<float>> &_listeners, 
 						Context &_context,
@@ -40,7 +41,8 @@ public:
 						float src_power = 1.0f, 
 						float lis_radius = 0.01f,
 						float energy_percentage = 100.0f,
-						size_t max_rays = 0);
+						size_t max_rays = 0,
+                        bool use_gpu = false);
 
 public:
 
