@@ -9,6 +9,8 @@ Accepted at AES 2025 Europe
 [Paper Link](https://arxiv.org/abs/2503.17866)
 
 ## Updates
+- 12/19/2025: We added NVIDIA OptiX support. Try it out!
+
 - 07/13/2025: We updated the auralization logic, which now allows for *any* higher-order ambisonic generation, as well as an improved logic for generating the ambisonic signals. Check it out!
 
 - 07/10/2025: There was a critical bug in both auralizer and the ray generator. The ray generator does not output listener directions in the output SIR, and the auralizer was using the listener position rather than their directions for calculation. Thanks to [@FEAfeatherTHER](https://github.com/FEAfeatherTHER) for spotting this bug!
@@ -70,7 +72,6 @@ Empirical results demonstrate:
 
 ## Limitations and Future Work
 - **Stationary Sources**: Currently optimized for stationary sources. Moving source support is on our roadmap.
-- **No GPU Acceleration**: CPU-bound but multi-threaded; GPU acceleration is a future enhancement.
 - **Ambisonic Auralization**: Extensible to other rendering methods (e.g., binaural/HRTF-based) with custom Python scripts.
 - **Potential for Deep Learning**: The concentrated nature of ray energy suggests that neural upsampling or ML-based reflection modeling is a promising direction.
 
